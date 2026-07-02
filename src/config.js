@@ -4,7 +4,7 @@ export const PORTS = {
 
 export const TARGET = {
   mode: 'google-demo',
-  url: 'https://www.google.com/recaptcha/api2/demo',
+  url: 'https://www.google.com/recaptcha/api2/demo?hl=en',
   submit: 'input[type="submit"], button[type="submit"]',
   tokenSelectors: 'textarea[name="g-recaptcha-response"]',
   anchorIframe: 'iframe[src*="/recaptcha/api2/anchor"]',

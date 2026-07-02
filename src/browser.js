@@ -1,4 +1,4 @@
-// Manages one browser session and streams the page into the UI via CDP screencast.
+// Manages one browser session and streams page screenshots into the UI.
 //
 // Persistent profile and optional proxy settings keep the browser closer to a
 // real browsing session across runs.
@@ -20,27 +20,28 @@ const PROFILE_DIR = process.env.PROFILE_DIR || path.join(__dirname, '..', '.prof
 const PROXY_SERVER = process.env.PROXY_SERVER || ''; // e.g. http://ip:port | socks5://ip:port
 const PROXY_USERNAME = process.env.PROXY_USERNAME || '';
 const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
-const LOCALE = process.env.BROWSER_LOCALE || 'vi-VN';
+const LOCALE = process.env.BROWSER_LOCALE || 'en-US';
 const TIMEZONE = process.env.BROWSER_TZ || 'Asia/Ho_Chi_Minh';
 const CHROME_EXECUTABLE_PATH = process.env.CHROME_EXECUTABLE_PATH || '';
 
 let context = null;
 let page = null;
 let cdp = null;
+let frameTimer = null;
+let frameBusy = false;
 
 async function ensureContext() {
   if (context) return context;
   const appView = BROWSER_VIEW === 'app';
   const executablePath = CHROME_EXECUTABLE_PATH || (appView ? findHeadlessBrowser() : findSystemBrowser());
-  const useNewHeadlessArg = appView && Boolean(executablePath);
-  const headless = appView && !useNewHeadlessArg;
+  const headless = appView;
   const args = [
     '--no-sandbox',
     '--disable-dev-shm-usage',
-    '--disable-blink-features=AutomationControlled'
+    '--disable-blink-features=AutomationControlled',
+    `--lang=${LOCALE}`
   ];
-  if (useNewHeadlessArg) {
-    args.push('--headless=new');
+  if (appView) {
     args.push(`--window-size=${VIEWPORT.width},${VIEWPORT.height + 90}`);
   } else if (!headless) {
     args.push(`--window-size=${VIEWPORT.width},${VIEWPORT.height + 90}`);
@@ -52,6 +53,7 @@ async function ensureContext() {
     args,
     viewport: VIEWPORT,
     locale: LOCALE,
+    extraHTTPHeaders: { 'Accept-Language': `${LOCALE},en;q=0.9` },
     timezoneId: TIMEZONE
   };
   if (executablePath) {
@@ -69,13 +71,13 @@ async function ensureContext() {
   context = await chromium.launchPersistentContext(PROFILE_DIR, options);
   console.log(`[browser] persistent profile: ${PROFILE_DIR}`);
   console.log(
-    `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${useNewHeadlessArg ? 'new' : headless} proxy=${PROXY_SERVER || 'none'} tz=${TIMEZONE} executable=${executablePath || 'playwright-default'}`
+    `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${headless} proxy=${PROXY_SERVER || 'none'} locale=${LOCALE} tz=${TIMEZONE} executable=${executablePath || 'playwright-default'}`
   );
   return context;
 }
 
 function findHeadlessBrowser() {
-  return findPlaywrightHeadlessShell() || findSystemBrowser();
+  return findSystemBrowser() || findPlaywrightHeadlessShell();
 }
 
 function findPlaywrightHeadlessShell() {
@@ -110,30 +112,39 @@ function findSystemBrowser() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || '';
 }
 
-async function startScreencast() {
+async function startFrameStream() {
   cdp = await context.newCDPSession(page);
-  cdp.on('Page.screencastFrame', async (payload) => {
-    bus.emit('frame', { data: payload.data });
-    try {
-      await cdp.send('Page.screencastFrameAck', { sessionId: payload.sessionId });
-    } catch {
-      /* stale frame, ignore */
-    }
-  });
-  await cdp.send('Page.startScreencast', {
-    format: 'jpeg',
-    quality: 90,
-    maxWidth: VIEWPORT.width,
-    maxHeight: VIEWPORT.height,
-    everyNthFrame: 1
-  });
+  await captureFrame();
+  frameTimer = setInterval(() => {
+    captureFrame().catch(() => {});
+  }, 250);
 }
 
-async function stopScreencast() {
+async function stopFrameStream() {
+  if (frameTimer) {
+    clearInterval(frameTimer);
+    frameTimer = null;
+  }
   if (cdp) {
-    try { await cdp.send('Page.stopScreencast'); } catch {}
     try { await cdp.detach(); } catch {}
     cdp = null;
+  }
+  frameBusy = false;
+}
+
+async function captureFrame() {
+  if (frameBusy || !page || page.isClosed()) return;
+  frameBusy = true;
+  try {
+    const frame = await page.screenshot({
+      type: 'jpeg',
+      quality: 90,
+      fullPage: false,
+      animations: 'allow'
+    });
+    bus.emit('frame', { data: frame.toString('base64') });
+  } finally {
+    frameBusy = false;
   }
 }
 
@@ -144,13 +155,13 @@ export async function getPage() {
   const existing = context.pages().find((p) => !p.isClosed());
   page = existing || (await context.newPage());
   await page.setViewportSize(VIEWPORT).catch(() => {});
-  await startScreencast();
+  await startFrameStream();
   return page;
 }
 
 export async function resetPage() {
   // Create a fresh page for the next job while keeping the persistent context.
-  await stopScreencast();
+  await stopFrameStream();
   if (page && !page.isClosed()) {
     await page.close().catch(() => {});
   }
@@ -184,7 +195,7 @@ export async function dispatchInput(evt) {
 }
 
 export async function closeAll() {
-  await stopScreencast();
+  await stopFrameStream();
   try { if (context) await context.close(); } catch {}
   context = page = null;
 }

@@ -136,9 +136,7 @@
     }
 
     #viewport {
-      display:flex;
-      align-items:center;
-      justify-content:center;
+      position:relative;
       overflow:hidden;
       max-width:100%;
       background:#fff;
@@ -151,6 +149,9 @@
 
     #screen {
       display:none;
+      position:absolute;
+      left:0;
+      top:0;
       max-width:none;
       max-height:none;
       transform-origin:top left;
