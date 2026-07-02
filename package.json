@@ -1,0 +1,18 @@
+{
+  "name": "rpa-bhyt-mvp",
+  "version": "0.1.0",
+  "description": "MVP 1 session: Playwright headful + CDP screencast live-view. Người click captcha trong UI. Luồng fill -> human click captcha -> submit -> parse.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/orchestrator.js",
+    "demo": "node demo-site/server.js",
+    "test": "node --test",
+    "decrypt-results": "node scripts/decrypt-results.mjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright": "1.48.0",
+    "ws": "^8.18.0"
+  }
+}
