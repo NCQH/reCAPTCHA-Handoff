@@ -58,3 +58,7 @@ npm start
 ```powershell
 npm.cmd test
 ```
+
+## License
+
+MIT. This project is a local demo against Google's public reCAPTCHA demo page. Respect the terms of any site you test against.
