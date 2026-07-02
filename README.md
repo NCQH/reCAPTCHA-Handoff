@@ -31,7 +31,7 @@ Open:
 http://localhost:3000
 ```
 
-Click `Mo demo`, then interact with the Google reCAPTCHA widget in the live-view panel.
+Click `Open demo`, then interact with the Google reCAPTCHA widget in the live-view panel.
 
 ## Browser Mode
 

@@ -50,7 +50,7 @@ wss.on('connection', (ws) => {
     }
   };
 
-  ws.send(JSON.stringify({ type: 'hello', message: 'Da ket noi.' }));
+  ws.send(JSON.stringify({ type: 'hello', message: 'Connected.' }));
 
   const onFrame = (frame) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'frame', data: frame.data }));
@@ -89,7 +89,7 @@ wss.on('connection', (ws) => {
         await abortActiveJob(activeJob.ws, 'REPLACED_BY_NEW_JOB', true);
       }
       if (busy) {
-        emit('FAILED', { message: 'Dang ban xu ly mot phien khac.' });
+        emit('FAILED', { message: 'Another captcha session is already running.' });
         return;
       }
 
@@ -103,7 +103,7 @@ wss.on('connection', (ws) => {
           { signal: controller.signal, onPage: captchaFocus.start }
         );
       } catch (err) {
-        emit('FAILED', { message: `Loi khong mong doi: ${err.message}` });
+        emit('FAILED', { message: `Unexpected error: ${err.message}` });
       } finally {
         if (activeJob?.controller === controller) activeJob = null;
         busy = false;
@@ -116,12 +116,12 @@ wss.on('connection', (ws) => {
 server.listen(PORTS.operator, () => {
   console.log(`[orchestrator] target=${TARGET.mode} -> ${TARGET.url}`);
   console.log(`[orchestrator] Operator UI: http://localhost:${PORTS.operator}`);
-  console.log('[orchestrator] Browser hien thi trong app.');
+  console.log('[orchestrator] Browser is streamed into the app.');
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
-    console.log(`\n[orchestrator] ${sig} - dang dong browser...`);
+    console.log(`\n[orchestrator] ${sig} - closing browser...`);
     captchaFocus.stop();
     await closeAll();
     process.exit(0);

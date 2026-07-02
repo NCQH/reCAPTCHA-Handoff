@@ -12,7 +12,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class CancelledJob extends Error {
   constructor() {
-    super('Job da bi huy.');
+    super('Job was cancelled.');
   }
 }
 
@@ -33,7 +33,7 @@ export async function runJob(emit, sendFocus = () => {}, options = {}) {
     throwIfCancelled(signal);
 
     emit(STATES.AWAIT_CHECKBOX, {
-      message: 'Click "I\'m not a robot" trong khung captcha demo.'
+      message: 'Click "I\'m not a robot" in the demo captcha widget.'
     });
 
     const token = await waitForCaptchaToken(page, {
@@ -42,33 +42,33 @@ export async function runJob(emit, sendFocus = () => {}, options = {}) {
       signal,
       onFocus: sendFocus,
       onChallenge: () => emit(STATES.AWAIT_CHALLENGE, {
-        message: 'Google yeu cau giai hinh. Hay thao tac ngay trong live-view.'
+        message: 'Google is showing an image challenge. Complete it in the live view.'
       })
     });
 
     if (!token) {
       sendFocus(null);
-      emit(STATES.FAILED, { message: 'Het thoi gian cho captcha.' });
+      emit(STATES.FAILED, { message: 'Timed out waiting for the captcha token.' });
       return { ok: false, reason: 'TOKEN_TIMEOUT' };
     }
 
     sendFocus(null);
-    emit(STATES.TOKEN_READY, { message: 'Da co token captcha. Dang submit demo...' });
+    emit(STATES.TOKEN_READY, { message: 'Captcha token is ready. Submitting the demo form...' });
 
     throwIfCancelled(signal);
-    emit(STATES.SUBMITTING, { message: 'Dang gui form demo cua Google...' });
+    emit(STATES.SUBMITTING, { message: "Submitting Google's demo form..." });
     await submitGoogleDemo(page);
 
     throwIfCancelled(signal);
     await waitForDemoResult(page, signal);
-    emit(STATES.DONE, { message: 'Google demo captcha da duoc submit thanh cong.' });
+    emit(STATES.DONE, { message: 'Google demo captcha was submitted successfully.' });
     return { ok: true };
   } catch (err) {
     if (err instanceof CancelledJob || signal?.aborted) {
       sendFocus(null);
       return { ok: false, reason: 'CANCELLED' };
     }
-    emit(STATES.FAILED, { message: `Loi: ${err.message}` });
+    emit(STATES.FAILED, { message: `Error: ${err.message}` });
     return { ok: false, reason: err.message };
   }
 }
@@ -79,7 +79,7 @@ async function openGoogleDemo(page, emit, sendFocus, signal) {
     try {
       throwIfCancelled(signal);
       emit(STATES.OPENING, {
-        message: `Dang mo Google reCAPTCHA demo${attempt > 1 ? ` - thu lai lan ${attempt}` : ''}...`
+        message: `Opening Google reCAPTCHA demo${attempt > 1 ? ` - retry ${attempt}` : ''}...`
       });
       await page.goto(TARGET.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       await waitForCaptchaFocus(page, { target: TARGET, onFocus: sendFocus, signal });
@@ -110,5 +110,5 @@ async function waitForDemoResult(page, signal) {
     if (bodyText.includes(TARGET.successText)) return;
     await sleep(400);
   }
-  throw new Error('Khong nhan duoc trang ket qua demo sau khi submit.');
+  throw new Error('Google demo result page did not appear after submit.');
 }

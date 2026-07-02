@@ -1,10 +1,7 @@
-// Quản lý MỘT session browser + STREAM màn hình lên UI qua CDP screencast (Phương án B).
+// Manages one browser session and streams the page into the UI via CDP screencast.
 //
-// #3 Làm ấm profile + IP:
-//   - launchPersistentContext(PROFILE_DIR): cookie/localStorage + điểm tin cậy reCAPTCHA
-//     được GIỮ LẠI trên đĩa qua các lần chạy -> profile "ấm" -> ít bị đố hình dần.
-//   - proxy (PROXY_SERVER...): trỏ ra IP sạch/residential để giảm rủi ro bị chặn.
-//   - locale/timezone VN + tắt cờ AutomationControlled -> giảm dấu vết tự động hoá.
+// Persistent profile and optional proxy settings keep the browser closer to a
+// real browsing session across runs.
 
 import { chromium } from 'playwright';
 import { EventEmitter } from 'node:events';
@@ -12,15 +9,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const bus = new EventEmitter(); // 'frame' => { data }, 'focus' broadcast ở orchestrator
+export const bus = new EventEmitter(); // 'frame' => { data }, 'focus' is broadcast by orchestrator
 export const VIEWPORT = { width: 1280, height: 760 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// app (mặc định) = headless không cửa sổ | hidden = headful ngoài màn hình | desktop = headful hiện
+// app = headless streamed UI | hidden = off-screen headful | desktop = visible headful
 const BROWSER_VIEW = (process.env.BROWSER_VIEW || 'app').toLowerCase();
 const PROFILE_DIR = process.env.PROFILE_DIR || path.join(__dirname, '..', '.profile');
-const PROXY_SERVER = process.env.PROXY_SERVER || ''; // vd: http://ip:port | socks5://ip:port
+const PROXY_SERVER = process.env.PROXY_SERVER || ''; // e.g. http://ip:port | socks5://ip:port
 const PROXY_USERNAME = process.env.PROXY_USERNAME || '';
 const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
 const LOCALE = process.env.BROWSER_LOCALE || 'vi-VN';
@@ -68,9 +65,9 @@ async function ensureContext() {
     }
   }
 
-  // Persistent context: profile bền trên đĩa -> "ấm" dần.
+  // Persistent context keeps cookies and local storage across runs.
   context = await chromium.launchPersistentContext(PROFILE_DIR, options);
-  console.log(`[browser] profile bền: ${PROFILE_DIR}`);
+  console.log(`[browser] persistent profile: ${PROFILE_DIR}`);
   console.log(
     `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${useNewHeadlessArg ? 'new' : headless} proxy=${PROXY_SERVER || 'none'} tz=${TIMEZONE} executable=${executablePath || 'playwright-default'}`
   );
@@ -120,7 +117,7 @@ async function startScreencast() {
     try {
       await cdp.send('Page.screencastFrameAck', { sessionId: payload.sessionId });
     } catch {
-      /* frame cũ, bỏ qua */
+      /* stale frame, ignore */
     }
   });
   await cdp.send('Page.startScreencast', {
@@ -143,7 +140,7 @@ async function stopScreencast() {
 export async function getPage() {
   if (page && !page.isClosed()) return page;
   await ensureContext();
-  // Tái dùng page có sẵn của persistent context (tránh mở thừa tab).
+  // Reuse an existing persistent-context page when possible.
   const existing = context.pages().find((p) => !p.isClosed());
   page = existing || (await context.newPage());
   await page.setViewportSize(VIEWPORT).catch(() => {});
@@ -152,7 +149,7 @@ export async function getPage() {
 }
 
 export async function resetPage() {
-  // Tạo page mới cho job mới nhưng GIỮ context (giữ profile ấm trong phiên).
+  // Create a fresh page for the next job while keeping the persistent context.
   await stopScreencast();
   if (page && !page.isClosed()) {
     await page.close().catch(() => {});
@@ -161,7 +158,7 @@ export async function resetPage() {
   return getPage();
 }
 
-// Thao tác chuột của người (toạ độ chuẩn hoá 0..1) -> dispatch vào browser.
+// Human mouse events use normalized 0..1 coordinates and are dispatched into the browser.
 export async function dispatchInput(evt) {
   if (!cdp) return;
   const x = Math.round((evt.nx ?? 0) * VIEWPORT.width);

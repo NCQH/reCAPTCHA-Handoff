@@ -114,7 +114,7 @@ connect();
 startBtn.onclick = () => {
   startBtn.disabled = true;
   msgBox.classList.remove('error');
-  msgBox.textContent = 'Dang mo Google reCAPTCHA demo...';
+  msgBox.textContent = 'Opening Google reCAPTCHA demo...';
   send({ type: 'start' });
 };
 
@@ -123,7 +123,7 @@ reloadBtn.onclick = () => {
   screen.removeAttribute('src');
   showPlaceholder();
   msgBox.classList.remove('error');
-  msgBox.textContent = 'Dang tai lai...';
+  msgBox.textContent = 'Reloading...';
   send({ type: 'cancel', force: true });
   setTimeout(() => send({ type: 'start' }), 250);
 };
