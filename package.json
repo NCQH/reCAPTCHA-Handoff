@@ -1,14 +1,12 @@
 {
-  "name": "rpa-bhyt-mvp",
+  "name": "recaptcha-demo-handoff",
   "version": "0.1.0",
-  "description": "MVP 1 session: Playwright headful + CDP screencast live-view. Người click captcha trong UI. Luồng fill -> human click captcha -> submit -> parse.",
+  "description": "Google reCAPTCHA demo handoff via Playwright + CDP screencast.",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "node src/orchestrator.js",
-    "demo": "node demo-site/server.js",
-    "test": "node --test",
-    "decrypt-results": "node scripts/decrypt-results.mjs"
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.19.2",

@@ -1,253 +1,173 @@
-// Operator UI: 1 giao diện duy nhất.
-//  - Nhận frame screencast -> vẽ vào <img> (live-view).
-//  - Gửi thao tác chuột (toạ độ chuẩn hoá 0..1) về server -> CDP dispatch vào browser.
-//  - Người click reCAPTCHA NGAY trong panel này (không đụng cửa sổ desktop).
-
 const el = (id) => document.getElementById(id);
-const msgBox = el('msg');
-const resultBox = el('result');
-const goBtn = el('go');
-const screen = el('screen');
-const ph = el('ph');
-const stage = document.querySelector('.stage');
-const vp = el('vp');
-const captchaBox = el('captchaBox');
-const resetBtn = el('resetForm');
-const modeTag = el('modeTag');
-const dot = el('dot');
-const connText = el('connText');
 
-// --- Crop live-view về đúng vùng captcha ---
+const msgBox = el('msg');
+const startBtn = el('start');
+const reloadBtn = el('reload');
+const screen = el('screen');
+const placeholder = el('placeholder');
+const stage = el('stage');
+const viewportBox = el('viewport');
+const modeTag = el('modeTag');
+const connText = el('connText');
+const dot = el('dot');
+
 let viewport = { width: 1280, height: 760 };
-let focusRect = null;      // rect viewport CSS px, hoặc null = toàn màn hình
-let focusEnabled = true;   // người dùng có thể tắt để xem toàn màn hình
-let currentState = '';
+let focusRect = null;
+let ws;
 
 function hasFrame() {
   return screen.src && screen.src.startsWith('data:image/');
 }
 
-function shouldShowLive() {
-  return hasFrame() && Boolean(focusRect);
-}
-
-function showLiveFrame() {
-  captchaBox.classList.add('has-frame');
-  screen.style.display = 'block';
-  ph.style.display = 'none';
-}
-
-function hideLiveFrame() {
-  captchaBox.classList.remove('has-frame');
+function showPlaceholder() {
   screen.style.display = 'none';
-  ph.style.display = '';
-  captchaBox.style.width = '';
-  captchaBox.style.height = '';
-  stage.style.width = '';
-  stage.style.height = '';
-  stage.classList.remove('focus');
-  vp.style.width = '';
-  vp.style.height = '';
-  screen.style.objectFit = '';
+  placeholder.style.display = '';
+  stage.classList.remove('ready');
+  viewportBox.style.width = '';
+  viewportBox.style.height = '';
+  screen.style.width = '';
+  screen.style.height = '';
   screen.style.transform = '';
 }
 
 function applyView() {
-  if (!hasFrame()) {
-    hideLiveFrame();
+  if (!hasFrame() || !focusRect) {
+    showPlaceholder();
     return;
   }
 
-  if (!focusRect) return;
-
-  const pad = 0;
-  const x = Math.max(0, focusRect.x - pad);
-  const y = Math.max(0, focusRect.y - pad);
-  const w = Math.min(viewport.width - x, focusRect.w + pad * 2);
-  const h = Math.min(viewport.height - y, focusRect.h + pad * 2);
-  const maxW = Math.max(Math.min(window.innerWidth - 32, 520), 1);
-  const maxH = Math.max(Math.min(window.innerHeight - 180, 620), 1);
+  const x = Math.max(0, focusRect.x);
+  const y = Math.max(0, focusRect.y);
+  const w = Math.min(viewport.width - x, focusRect.w);
+  const h = Math.min(viewport.height - y, focusRect.h);
+  const maxW = Math.max(Math.min(window.innerWidth - 32, 560), 1);
+  const maxH = Math.max(Math.min(window.innerHeight - 220, 620), 1);
   const zoom = Math.min(maxW / w, maxH / h, 1);
   const outW = Math.round(w * zoom);
   const outH = Math.round(h * zoom);
-  captchaBox.style.width = `${outW}px`;
-  captchaBox.style.height = `${outH}px`;
-  stage.style.width = '100%';
-  stage.style.height = '100%';
-  stage.classList.add('focus');
-  vp.style.width = outW + 'px';
-  vp.style.height = outH + 'px';
-  screen.style.maxWidth = screen.style.maxHeight = 'none';
-  screen.style.width = viewport.width * zoom + 'px';
-  screen.style.height = viewport.height * zoom + 'px';
-  screen.style.objectFit = '';
+
+  stage.classList.add('ready');
+  placeholder.style.display = 'none';
+  screen.style.display = 'block';
+  viewportBox.style.width = `${outW}px`;
+  viewportBox.style.height = `${outH}px`;
+  screen.style.width = `${viewport.width * zoom}px`;
+  screen.style.height = `${viewport.height * zoom}px`;
   screen.style.transform = `translate(${-x * zoom}px, ${-y * zoom}px)`;
 }
 
-el('toggleView').onclick = () => {
-  focusEnabled = !focusEnabled;
-  focusEnabled = true;
-  el('toggleView').textContent = 'Captcha';
-  applyView();
-};
-
-// Hiển thị kết quả dạng list (nếu có items) hoặc JSON (fallback).
-function renderResult(result) {
-  const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  if (Array.isArray(result.items) && result.items.length) {
-    let html = '';
-    if (result.title) html += `<div class="rtitle">${esc(result.title)}</div>`;
-    html += '<ul class="rlist">';
-    for (const it of result.items) html += `<li><span class="rk">${esc(it.label)}:</span> ${esc(it.value)}</li>`;
-    html += '</ul>';
-    if (Array.isArray(result.extra)) {
-      for (const s of result.extra) {
-        if (s.text) html += `<div class="rsec"><b>${esc(s.title)}:</b> ${esc(s.text)}</div>`;
-      }
-    }
-    resultBox.innerHTML = html;
-  } else {
-    resultBox.textContent = JSON.stringify(result, null, 2);
-  }
-}
-
-fetch('/api/config').then((r) => r.json())
-  .then((cfg) => {
-    if (modeTag) modeTag.textContent = `MVP · live-view · ${cfg.mode}`;
-    if (cfg.viewport) viewport = cfg.viewport;
+fetch('/api/config')
+  .then((response) => response.json())
+  .then((config) => {
+    if (modeTag) modeTag.textContent = `${config.mode} - ${config.url}`;
+    if (config.viewport) viewport = config.viewport;
   })
   .catch(() => {});
 
-// --- WebSocket ---
-let ws;
-function send(obj) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+function send(payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+}
 
 function connect() {
   ws = new WebSocket(`ws://${location.host}`);
+
   ws.onopen = () => {
     dot?.classList.add('on');
-    if (connText) connText.textContent = 'đã kết nối';
-    goBtn.disabled = false;
+    if (connText) connText.textContent = 'connected';
+    startBtn.disabled = false;
+    reloadBtn.disabled = false;
   };
+
   ws.onclose = () => {
     dot?.classList.remove('on');
-    if (connText) connText.textContent = 'mất kết nối — thử lại…';
-    goBtn.disabled = true;
+    if (connText) connText.textContent = 'reconnecting';
+    startBtn.disabled = true;
+    reloadBtn.disabled = true;
     setTimeout(connect, 1500);
   };
 
-  ws.onmessage = (ev) => {
-    const data = JSON.parse(ev.data);
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
 
     if (data.type === 'frame') {
-      screen.src = 'data:image/jpeg;base64,' + data.data;
-      if (shouldShowLive()) {
-        showLiveFrame();
-        applyView();
-      }
+      screen.src = `data:image/jpeg;base64,${data.data}`;
+      applyView();
       return;
     }
 
     if (data.type === 'focus') {
       focusRect = data.rect;
-      if (shouldShowLive()) {
-        showLiveFrame();
-        applyView();
-      } else {
-        hideLiveFrame();
-        applyView();
-      }
+      applyView();
       return;
     }
 
     if (data.type === 'state') {
-      currentState = data.state;
-      if (shouldShowLive()) {
-        showLiveFrame();
-        applyView();
-      } else {
-        hideLiveFrame();
-      }
       if (data.message) msgBox.textContent = data.message;
-      msgBox.style.color = data.state === 'FAILED' ? '#b00000' : '';
-      if (data.state === 'DONE' && data.result) {
-        resultBox.style.display = 'block';
-        renderResult(data.result);
-      }
-      if (data.state === 'FAILED' || data.state === 'DONE') goBtn.disabled = false;
+      msgBox.classList.toggle('error', data.state === 'FAILED');
+      if (data.state === 'FAILED' || data.state === 'DONE') startBtn.disabled = false;
     }
   };
 }
+
 connect();
 
-goBtn.onclick = () => {
-  resultBox.style.display = 'none';
-  resultBox.textContent = '';
-  goBtn.disabled = true;
-  msgBox.style.color = '';
-  currentState = 'FILLING';
-  if (hasFrame()) applyView();
-  send({ type: 'submit', maso: el('maso').value, hoten: el('hoten').value, ngaysinh: el('ngaysinh').value });
+startBtn.onclick = () => {
+  startBtn.disabled = true;
+  msgBox.classList.remove('error');
+  msgBox.textContent = 'Dang mo Google reCAPTCHA demo...';
+  send({ type: 'start' });
 };
 
-resetBtn.onclick = () => {
-  el('maso').value = '';
-  el('hoten').value = '';
-  el('ngaysinh').value = '';
-  resultBox.style.display = 'none';
-  resultBox.textContent = '';
-  msgBox.style.color = '';
-  msgBox.textContent = 'Nhập dữ liệu rồi bấm "Tra cứu".';
-  currentState = '';
+reloadBtn.onclick = () => {
   focusRect = null;
-  hideLiveFrame();
-  send({ type: 'cancel' });
+  screen.removeAttribute('src');
+  showPlaceholder();
+  msgBox.classList.remove('error');
+  msgBox.textContent = 'Dang tai lai...';
+  send({ type: 'cancel', force: true });
+  setTimeout(() => send({ type: 'start' }), 250);
 };
 
 window.addEventListener('beforeunload', () => {
-  send({ type: 'cancel' });
+  send({ type: 'cancel', force: true });
 });
 
-// --- Chuyển thao tác chuột của người về browser ---
-function norm(e) {
-  const r = screen.getBoundingClientRect();
+function norm(event) {
+  const bounds = screen.getBoundingClientRect();
   return {
-    nx: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
-    ny: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+    nx: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+    ny: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height))
   };
 }
 
-function blockLiveViewEvent(e) {
-  e.preventDefault();
-  e.stopPropagation();
+function blockLiveViewEvent(event) {
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 let lastMove = 0;
-screen.addEventListener('mousemove', (e) => {
+screen.addEventListener('mousemove', (event) => {
   const now = performance.now();
-  if (now - lastMove < 35) return; // throttle ~28fps
+  if (now - lastMove < 35) return;
   lastMove = now;
-  send({ type: 'input', kind: 'move', ...norm(e) });
+  send({ type: 'input', kind: 'move', ...norm(event) });
 });
-screen.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) {
-    blockLiveViewEvent(e);
+
+screen.addEventListener('mousedown', (event) => {
+  if (event.button !== 0) {
+    blockLiveViewEvent(event);
     return;
   }
-  e.preventDefault();
-  send({ type: 'input', kind: 'down', ...norm(e) });
+  event.preventDefault();
+  send({ type: 'input', kind: 'down', ...norm(event) });
 });
+
+window.addEventListener('mouseup', (event) => {
+  if (screen.style.display !== 'block') return;
+  if (event.button !== 0) return;
+  send({ type: 'input', kind: 'up', ...norm(event) });
+});
+
 screen.addEventListener('contextmenu', blockLiveViewEvent);
 screen.addEventListener('auxclick', blockLiveViewEvent);
-// mouseup bắt trên window để không lỡ khi thả chuột ngoài ảnh
-window.addEventListener('mouseup', (e) => {
-  if (screen.style.display !== 'block') return;
-  if (e.button !== 0) {
-    if (e.target === screen) blockLiveViewEvent(e);
-    return;
-  }
-  send({ type: 'input', kind: 'up', ...norm(e) });
-});
-screen.addEventListener('wheel', (e) => {
-  blockLiveViewEvent(e);
-}, { passive: false });
+screen.addEventListener('wheel', blockLiveViewEvent, { passive: false });

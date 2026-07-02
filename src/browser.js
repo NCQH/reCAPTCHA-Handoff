@@ -186,19 +186,6 @@ export async function dispatchInput(evt) {
   await cdp.send('Input.dispatchMouseEvent', params).catch(() => {});
 }
 
-// Reset widget reCAPTCHA (dùng khi token hết hạn / bị từ chối) -> người click lại.
-export async function resetCaptcha() {
-  if (!page || page.isClosed()) return;
-  await page
-    .evaluate(() => {
-      try { if (window.grecaptcha) window.grecaptcha.reset(); } catch {}
-      const t = document.querySelector('#tokenRecaptch');
-      if (t) t.value = '';
-      document.querySelectorAll('textarea[name="g-recaptcha-response"]').forEach((el) => (el.value = ''));
-    })
-    .catch(() => {});
-}
-
 export async function closeAll() {
   await stopScreencast();
   try { if (context) await context.close(); } catch {}
