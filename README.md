@@ -46,7 +46,7 @@ $env:TARGET_MODE="real"; npm start
 
 | `BROWSER_VIEW` | Hành vi | Ghi chú |
 |---|---|---|
-| `app` (mặc định) | **Headless — không mở cửa sổ nào**, chỉ stream vào app | Có thể bị reCAPTCHA đố hình nhiều hơn (người vẫn giải trong app) |
+| `app` (mặc định) | **Headless — không mở cửa sổ nào**, chỉ stream vào app | Ưu tiên Playwright headless-shell nếu có; có thể bị reCAPTCHA đố hình nhiều hơn (người vẫn giải trong app) |
 | `hidden` | Headful nhưng cửa sổ nằm ngoài màn hình | Ít bị captcha hơn, vẫn không thấy cửa sổ |
 | `desktop` | Headful, hiện cửa sổ | Để debug |
 

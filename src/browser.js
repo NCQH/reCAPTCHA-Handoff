@@ -25,7 +25,7 @@ const PROXY_USERNAME = process.env.PROXY_USERNAME || '';
 const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
 const LOCALE = process.env.BROWSER_LOCALE || 'vi-VN';
 const TIMEZONE = process.env.BROWSER_TZ || 'Asia/Ho_Chi_Minh';
-const CHROME_EXECUTABLE_PATH = process.env.CHROME_EXECUTABLE_PATH || findSystemBrowser();
+const CHROME_EXECUTABLE_PATH = process.env.CHROME_EXECUTABLE_PATH || '';
 
 let context = null;
 let page = null;
@@ -33,13 +33,19 @@ let cdp = null;
 
 async function ensureContext() {
   if (context) return context;
-  const headless = BROWSER_VIEW === 'app';
+  const appView = BROWSER_VIEW === 'app';
+  const executablePath = CHROME_EXECUTABLE_PATH || (appView ? findHeadlessBrowser() : findSystemBrowser());
+  const useNewHeadlessArg = appView && Boolean(executablePath);
+  const headless = appView && !useNewHeadlessArg;
   const args = [
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-blink-features=AutomationControlled'
   ];
-  if (!headless) {
+  if (useNewHeadlessArg) {
+    args.push('--headless=new');
+    args.push(`--window-size=${VIEWPORT.width},${VIEWPORT.height + 90}`);
+  } else if (!headless) {
     args.push(`--window-size=${VIEWPORT.width},${VIEWPORT.height + 90}`);
     args.push(BROWSER_VIEW === 'hidden' ? '--window-position=-32000,-32000' : '--window-position=0,0');
   }
@@ -51,8 +57,8 @@ async function ensureContext() {
     locale: LOCALE,
     timezoneId: TIMEZONE
   };
-  if (CHROME_EXECUTABLE_PATH) {
-    options.executablePath = CHROME_EXECUTABLE_PATH;
+  if (executablePath) {
+    options.executablePath = executablePath;
   }
   if (PROXY_SERVER) {
     options.proxy = { server: PROXY_SERVER };
@@ -66,9 +72,35 @@ async function ensureContext() {
   context = await chromium.launchPersistentContext(PROFILE_DIR, options);
   console.log(`[browser] profile bền: ${PROFILE_DIR}`);
   console.log(
-    `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${headless} proxy=${PROXY_SERVER || 'none'} tz=${TIMEZONE} executable=${CHROME_EXECUTABLE_PATH || 'playwright-default'}`
+    `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${useNewHeadlessArg ? 'new' : headless} proxy=${PROXY_SERVER || 'none'} tz=${TIMEZONE} executable=${executablePath || 'playwright-default'}`
   );
   return context;
+}
+
+function findHeadlessBrowser() {
+  return findPlaywrightHeadlessShell() || findSystemBrowser();
+}
+
+function findPlaywrightHeadlessShell() {
+  const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
+  try {
+    return fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith('chromium_headless_shell-'))
+      .map((entry) => {
+        const version = Number(entry.name.replace('chromium_headless_shell-', '')) || 0;
+        const base = path.join(root, entry.name);
+        return {
+          version,
+          executable: path.join(base, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
+          complete: path.join(base, 'INSTALLATION_COMPLETE')
+        };
+      })
+      .filter((candidate) => fs.existsSync(candidate.executable) && fs.existsSync(candidate.complete))
+      .sort((a, b) => b.version - a.version)[0]?.executable || '';
+  } catch {
+    return '';
+  }
 }
 
 function findSystemBrowser() {
