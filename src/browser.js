@@ -1,4 +1,4 @@
-// Manages one browser session and streams page screenshots into the UI.
+// Manages one browser session and streams CDP ScreenCast frames into the UI.
 //
 // Persistent profile and optional proxy settings keep the browser closer to a
 // real browsing session across runs.
@@ -23,12 +23,12 @@ const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
 const LOCALE = process.env.BROWSER_LOCALE || 'en-US';
 const TIMEZONE = process.env.BROWSER_TZ || 'Asia/Ho_Chi_Minh';
 const CHROME_EXECUTABLE_PATH = process.env.CHROME_EXECUTABLE_PATH || '';
+const BROWSER_NO_SANDBOX = process.env.BROWSER_NO_SANDBOX === 'true';
 
 let context = null;
 let page = null;
 let cdp = null;
-let frameTimer = null;
-let frameBusy = false;
+let screencast = null;
 
 async function ensureContext() {
   if (context) return context;
@@ -36,11 +36,11 @@ async function ensureContext() {
   const executablePath = CHROME_EXECUTABLE_PATH || (appView ? findHeadlessBrowser() : findSystemBrowser());
   const headless = appView;
   const args = [
-    '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-blink-features=AutomationControlled',
     `--lang=${LOCALE}`
   ];
+  if (BROWSER_NO_SANDBOX) args.unshift('--no-sandbox');
   if (appView) {
     args.push(`--window-size=${VIEWPORT.width},${VIEWPORT.height + 90}`);
   } else if (!headless) {
@@ -71,7 +71,7 @@ async function ensureContext() {
   context = await chromium.launchPersistentContext(PROFILE_DIR, options);
   console.log(`[browser] persistent profile: ${PROFILE_DIR}`);
   console.log(
-    `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${headless} proxy=${PROXY_SERVER || 'none'} locale=${LOCALE} tz=${TIMEZONE} executable=${executablePath || 'playwright-default'}`
+    `[browser] BROWSER_VIEW=${BROWSER_VIEW} headless=${headless} noSandbox=${BROWSER_NO_SANDBOX} proxy=${redactProxyForLog(PROXY_SERVER)} locale=${LOCALE} tz=${TIMEZONE} executable=${executablePath || 'playwright-default'}`
   );
   return context;
 }
@@ -112,39 +112,131 @@ function findSystemBrowser() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || '';
 }
 
+export function redactProxyForLog(proxyServer) {
+  if (!proxyServer) return 'none';
+  try {
+    const url = new URL(proxyServer);
+    const credentials = url.username || url.password ? '***:***@' : '';
+    return `${url.protocol}//${credentials}${url.host}`;
+  } catch {
+    return '[configured]';
+  }
+}
+
+export function createScreencastStream(
+  cdpSession,
+  { emitFrame, viewport = VIEWPORT, quality = 90 } = {}
+) {
+  if (!cdpSession || typeof cdpSession.send !== 'function') {
+    throw new TypeError('cdpSession.send must be a function');
+  }
+  if (typeof cdpSession.on !== 'function' || typeof cdpSession.off !== 'function') {
+    throw new TypeError('cdpSession.on and cdpSession.off must be functions');
+  }
+  if (typeof emitFrame !== 'function') {
+    throw new TypeError('emitFrame must be a function');
+  }
+
+  let listener = null;
+  let startPromise = null;
+  let active = false;
+  let started = false;
+
+  async function sendAck(sessionId) {
+    try {
+      await cdpSession.send('Page.screencastFrameAck', { sessionId });
+    } catch {
+      // The page may close between receiving a frame and acknowledging it.
+    }
+  }
+
+  async function handleFrame({ data, sessionId } = {}) {
+    try {
+      if (active && typeof data === 'string') emitFrame(data);
+    } catch {
+      // A disconnected UI must not break the browser screencast.
+    }
+    await sendAck(sessionId);
+  }
+
+  async function start() {
+    if (active) return startPromise;
+
+    active = true;
+    listener = (frame) => {
+      handleFrame(frame).catch(() => {});
+    };
+    cdpSession.on('Page.screencastFrame', listener);
+
+    startPromise = (async () => {
+      try {
+        await cdpSession.send('Page.startScreencast', {
+          format: 'jpeg',
+          quality,
+          maxWidth: viewport.width,
+          maxHeight: viewport.height
+        });
+        started = true;
+      } catch (err) {
+        active = false;
+        const failedListener = listener;
+        if (failedListener) cdpSession.off('Page.screencastFrame', failedListener);
+        listener = null;
+        throw err;
+      } finally {
+        startPromise = null;
+      }
+    })();
+
+    return startPromise;
+  }
+
+  async function stop() {
+    active = false;
+    const currentListener = listener;
+    listener = null;
+    if (currentListener) cdpSession.off('Page.screencastFrame', currentListener);
+
+    if (startPromise) await startPromise.catch(() => {});
+    if (!started) return;
+
+    started = false;
+    try {
+      await cdpSession.send('Page.stopScreencast');
+    } catch {
+      // The page/session may already be closed.
+    }
+  }
+
+  return { start, stop };
+}
+
 async function startFrameStream() {
   cdp = await context.newCDPSession(page);
-  await captureFrame();
-  frameTimer = setInterval(() => {
-    captureFrame().catch(() => {});
-  }, 250);
+  screencast = createScreencastStream(cdp, {
+    viewport: VIEWPORT,
+    emitFrame: (data) => bus.emit('frame', { data })
+  });
+  try {
+    await screencast.start();
+  } catch (err) {
+    await screencast.stop().catch(() => {});
+    screencast = null;
+    try { await cdp.detach(); } catch {}
+    cdp = null;
+    throw err;
+  }
 }
 
 async function stopFrameStream() {
-  if (frameTimer) {
-    clearInterval(frameTimer);
-    frameTimer = null;
-  }
-  if (cdp) {
-    try { await cdp.detach(); } catch {}
-    cdp = null;
-  }
-  frameBusy = false;
-}
+  const currentScreencast = screencast;
+  screencast = null;
+  if (currentScreencast) await currentScreencast.stop().catch(() => {});
 
-async function captureFrame() {
-  if (frameBusy || !page || page.isClosed()) return;
-  frameBusy = true;
-  try {
-    const frame = await page.screenshot({
-      type: 'jpeg',
-      quality: 90,
-      fullPage: false,
-      animations: 'allow'
-    });
-    bus.emit('frame', { data: frame.toString('base64') });
-  } finally {
-    frameBusy = false;
+  const currentCdp = cdp;
+  cdp = null;
+  if (currentCdp) {
+    try { await currentCdp.detach(); } catch {}
   }
 }
 
@@ -170,21 +262,39 @@ export async function resetPage() {
 }
 
 // Human mouse events use normalized 0..1 coordinates and are dispatched into the browser.
+const INPUT_KINDS = new Set(['move', 'down', 'up', 'wheel']);
+const MAX_WHEEL_DELTA = 5000;
+
+export function isValidInputEvent(evt) {
+  if (!evt || typeof evt !== 'object' || evt.type !== 'input' || !INPUT_KINDS.has(evt.kind)) {
+    return false;
+  }
+  if (!Number.isFinite(evt.nx) || evt.nx < 0 || evt.nx > 1) return false;
+  if (!Number.isFinite(evt.ny) || evt.ny < 0 || evt.ny > 1) return false;
+  if (evt.kind === 'wheel') {
+    return Number.isFinite(evt.dx)
+      && Number.isFinite(evt.dy)
+      && Math.abs(evt.dx) <= MAX_WHEEL_DELTA
+      && Math.abs(evt.dy) <= MAX_WHEEL_DELTA;
+  }
+  return true;
+}
+
 export async function dispatchInput(evt) {
-  if (!cdp) return;
-  const x = Math.round((evt.nx ?? 0) * VIEWPORT.width);
-  const y = Math.round((evt.ny ?? 0) * VIEWPORT.height);
+  if (!isValidInputEvent(evt) || !cdp) return false;
+  const x = Math.round(evt.nx * VIEWPORT.width);
+  const y = Math.round(evt.ny * VIEWPORT.height);
 
   if (evt.kind === 'wheel') {
     await cdp
-      .send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: evt.dx || 0, deltaY: evt.dy || 0 })
+      .send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: evt.dx, deltaY: evt.dy })
       .catch(() => {});
-    return;
+    return true;
   }
 
   const typeMap = { move: 'mouseMoved', down: 'mousePressed', up: 'mouseReleased' };
   const type = typeMap[evt.kind];
-  if (!type) return;
+  if (!type) return false;
 
   const params = { type, x, y };
   if (evt.kind === 'down' || evt.kind === 'up') {
@@ -192,6 +302,7 @@ export async function dispatchInput(evt) {
     params.clickCount = 1;
   }
   await cdp.send('Input.dispatchMouseEvent', params).catch(() => {});
+  return true;
 }
 
 export async function closeAll() {

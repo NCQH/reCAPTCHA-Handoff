@@ -13,6 +13,7 @@ const dot = el('dot');
 
 let viewport = { width: 1280, height: 760 };
 let focusRect = null;
+let reloadPending = false;
 let ws;
 
 function hasFrame() {
@@ -104,6 +105,14 @@ function connect() {
     if (data.type === 'state') {
       if (data.message) msgBox.textContent = data.message;
       msgBox.classList.toggle('error', data.state === 'FAILED');
+      if (data.state === 'CANCELLED') {
+        startBtn.disabled = false;
+        if (reloadPending) {
+          reloadPending = false;
+          startBtn.disabled = true;
+          send({ type: 'start' });
+        }
+      }
       if (data.state === 'FAILED' || data.state === 'DONE') startBtn.disabled = false;
     }
   };
@@ -112,6 +121,7 @@ function connect() {
 connect();
 
 startBtn.onclick = () => {
+  reloadPending = false;
   startBtn.disabled = true;
   msgBox.classList.remove('error');
   msgBox.textContent = 'Opening Google reCAPTCHA demo...';
@@ -119,17 +129,17 @@ startBtn.onclick = () => {
 };
 
 reloadBtn.onclick = () => {
+  reloadPending = true;
   focusRect = null;
   screen.removeAttribute('src');
   showPlaceholder();
   msgBox.classList.remove('error');
   msgBox.textContent = 'Reloading...';
-  send({ type: 'cancel', force: true });
-  setTimeout(() => send({ type: 'start' }), 250);
+  send({ type: 'cancel' });
 };
 
 window.addEventListener('beforeunload', () => {
-  send({ type: 'cancel', force: true });
+  send({ type: 'cancel' });
 });
 
 function norm(event) {
@@ -170,4 +180,13 @@ window.addEventListener('mouseup', (event) => {
 
 screen.addEventListener('contextmenu', blockLiveViewEvent);
 screen.addEventListener('auxclick', blockLiveViewEvent);
-screen.addEventListener('wheel', blockLiveViewEvent, { passive: false });
+screen.addEventListener('wheel', (event) => {
+  blockLiveViewEvent(event);
+  send({
+    type: 'input',
+    kind: 'wheel',
+    ...norm(event),
+    dx: event.deltaX,
+    dy: event.deltaY
+  });
+}, { passive: false });

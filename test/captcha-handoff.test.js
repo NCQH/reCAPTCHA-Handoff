@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createCaptchaFocusTracker,
   focusKey,
   getCaptchaFocusRect,
   waitForCaptchaToken
@@ -32,6 +33,9 @@ function fakeLocator(entry = {}) {
 
 function fakePage(entries) {
   return {
+    isClosed() {
+      return false;
+    },
     locator(selector) {
       return fakeLocator(entries[selector]);
     },
@@ -106,4 +110,30 @@ test('waitForCaptchaToken reads the first non-empty token', async () => {
 
   const token = await waitForCaptchaToken(page, { target, timeoutMs: 10 });
   assert.equal(token, 'captcha-token');
+});
+
+test('captcha focus tracker refreshes on demand without a polling timer', async () => {
+  const anchor = {
+    visible: true,
+    box: { x: 10, y: 20, width: 304, height: 78 }
+  };
+  const page = fakePage({
+    'iframe.challenge': { visible: false, count: 0 },
+    'iframe.anchor': anchor
+  });
+  const focus = [];
+  const tracker = createCaptchaFocusTracker({
+    target,
+    emitFocus: (rect) => focus.push(rect)
+  });
+
+  await tracker.start(page);
+  anchor.box = { x: 25, y: 30, width: 304, height: 78 };
+  await tracker.publish(page);
+  tracker.stop(false);
+
+  assert.deepEqual(focus, [
+    { x: 10, y: 20, w: 304, h: 78, kind: 'checkbox' },
+    { x: 25, y: 30, w: 304, h: 78, kind: 'checkbox' }
+  ]);
 });

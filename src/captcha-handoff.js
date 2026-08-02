@@ -104,48 +104,51 @@ export async function waitForCaptchaToken(
   return '';
 }
 
-export function createCaptchaFocusTracker({ target, emitFocus, intervalMs = FOCUS_POLL_MS }) {
+export function createCaptchaFocusTracker({ target, emitFocus }) {
   if (typeof emitFocus !== 'function') throw new TypeError('emitFocus must be a function');
 
-  let timer = null;
   let busy = false;
+  let running = false;
   let runId = 0;
+  let publishId = 0;
   let lastKey = '';
 
   async function publish(page, expectedRunId = runId) {
-    if (expectedRunId !== runId) return;
-    if (!page || page.isClosed()) {
-      if (expectedRunId === runId) stop();
-      return;
-    }
+    if (!running || expectedRunId !== runId || busy) return null;
 
-    const rect = await getCaptchaFocusRect(page, target);
-    if (expectedRunId !== runId) return;
-    const key = focusKey(rect);
-    if (key !== lastKey) {
-      lastKey = key;
-      emitFocus(rect);
+    busy = true;
+    const currentPublishId = ++publishId;
+    try {
+      if (!page || page.isClosed()) {
+        if (expectedRunId === runId) stop();
+        return null;
+      }
+
+      const rect = await getCaptchaFocusRect(page, target);
+      if (!running || expectedRunId !== runId) return null;
+      const key = focusKey(rect);
+      if (key !== lastKey) {
+        lastKey = key;
+        emitFocus(rect);
+      }
+      return rect;
+    } finally {
+      if (currentPublishId === publishId) busy = false;
     }
   }
 
   function start(page) {
     stop(false);
+    running = true;
     const currentRunId = ++runId;
     lastKey = '';
-    publish(page, currentRunId).catch(() => {});
-    timer = setInterval(() => {
-      if (busy) return;
-      busy = true;
-      publish(page, currentRunId).finally(() => {
-        busy = false;
-      });
-    }, intervalMs);
+    return publish(page, currentRunId);
   }
 
   function stop(emitNull = true) {
+    running = false;
     runId++;
-    if (timer) clearInterval(timer);
-    timer = null;
+    publishId++;
     busy = false;
     lastKey = '';
     if (emitNull) emitFocus(null);

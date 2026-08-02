@@ -1,7 +1,7 @@
 {
   "name": "recaptcha-demo-handoff",
   "version": "0.1.0",
-  "description": "Google reCAPTCHA demo handoff via Playwright screenshot streaming.",
+  "description": "Google reCAPTCHA demo handoff via Playwright CDP ScreenCast streaming.",
   "license": "MIT",
   "type": "module",
   "private": true,
