@@ -1,7 +1,7 @@
 // Manages one browser session and streams CDP ScreenCast frames into the UI.
 //
-// Persistent profile and optional proxy settings keep the browser closer to a
-// real browsing session across runs.
+// Persistent profile keeps cookies across runs; the optional proxy is for
+// network setups such as corporate proxies.
 
 import { chromium } from 'playwright';
 import { EventEmitter } from 'node:events';
@@ -80,36 +80,88 @@ function findHeadlessBrowser() {
   return findSystemBrowser() || findPlaywrightHeadlessShell();
 }
 
-function findPlaywrightHeadlessShell() {
-  const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
+const LINUX_BROWSER_PATHS = [
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/google-chrome',
+  '/opt/google/chrome/chrome',
+  '/usr/bin/microsoft-edge-stable',
+  '/usr/bin/microsoft-edge',
+  '/opt/microsoft/msedge/msedge',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/snap/bin/chromium'
+];
+
+// Relative paths (inside each chromium_headless_shell-<rev> folder) per platform.
+// Older Linux builds shipped the shell as chrome-linux/headless_shell.
+const HEADLESS_SHELL_PATHS = {
+  win32: [['chrome-headless-shell-win64', 'chrome-headless-shell.exe']],
+  linux: [
+    ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
+    ['chrome-linux', 'headless_shell']
+  ]
+};
+
+function pathFor(platform) {
+  return platform === 'win32' ? path.win32 : path.posix;
+}
+
+export function systemBrowserCandidates({ platform = process.platform, env = process.env } = {}) {
+  if (platform === 'win32') {
+    const roots = [env.PROGRAMFILES, env['PROGRAMFILES(X86)'], env.LOCALAPPDATA].filter(Boolean);
+    const apps = [
+      ['Google', 'Chrome', 'Application', 'chrome.exe'],
+      ['Microsoft', 'Edge', 'Application', 'msedge.exe']
+    ];
+    return apps.flatMap((app) => roots.map((root) => path.win32.join(root, ...app)));
+  }
+  if (platform === 'linux') return [...LINUX_BROWSER_PATHS];
+  return [];
+}
+
+export function playwrightCacheDir({ platform = process.platform, env = process.env } = {}) {
+  const p = pathFor(platform);
+  if (env.PLAYWRIGHT_BROWSERS_PATH && env.PLAYWRIGHT_BROWSERS_PATH !== '0') {
+    return env.PLAYWRIGHT_BROWSERS_PATH;
+  }
+  if (platform === 'win32') return env.LOCALAPPDATA ? p.join(env.LOCALAPPDATA, 'ms-playwright') : '';
+  if (platform === 'linux') {
+    const cacheHome = env.XDG_CACHE_HOME || (env.HOME ? p.join(env.HOME, '.cache') : '');
+    return cacheHome ? p.join(cacheHome, 'ms-playwright') : '';
+  }
+  return '';
+}
+
+export function findPlaywrightHeadlessShell({
+  platform = process.platform,
+  env = process.env,
+  fsImpl = fs
+} = {}) {
+  const root = playwrightCacheDir({ platform, env });
+  const relativePaths = HEADLESS_SHELL_PATHS[platform];
+  if (!root || !relativePaths) return '';
+  const p = pathFor(platform);
   try {
-    return fs
+    return fsImpl
       .readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && entry.name.startsWith('chromium_headless_shell-'))
       .map((entry) => {
         const version = Number(entry.name.replace('chromium_headless_shell-', '')) || 0;
-        const base = path.join(root, entry.name);
-        return {
-          version,
-          executable: path.join(base, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
-          complete: path.join(base, 'INSTALLATION_COMPLETE')
-        };
+        const base = p.join(root, entry.name);
+        const executable = relativePaths
+          .map((parts) => p.join(base, ...parts))
+          .find((candidate) => fsImpl.existsSync(candidate));
+        return { version, executable, complete: p.join(base, 'INSTALLATION_COMPLETE') };
       })
-      .filter((candidate) => fs.existsSync(candidate.executable) && fs.existsSync(candidate.complete))
+      .filter((candidate) => candidate.executable && fsImpl.existsSync(candidate.complete))
       .sort((a, b) => b.version - a.version)[0]?.executable || '';
   } catch {
     return '';
   }
 }
 
-function findSystemBrowser() {
-  const candidates = [
-    path.join(process.env.PROGRAMFILES || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(process.env.PROGRAMFILES || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe')
-  ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) || '';
+export function findSystemBrowser({ platform = process.platform, env = process.env, fsImpl = fs } = {}) {
+  return systemBrowserCandidates({ platform, env }).find((candidate) => fsImpl.existsSync(candidate)) || '';
 }
 
 export function redactProxyForLog(proxyServer) {
