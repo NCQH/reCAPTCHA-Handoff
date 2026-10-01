@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 
 import {
   createScreencastStream,
+  findPlaywrightHeadlessShell,
+  findSystemBrowser,
   isValidInputEvent,
+  playwrightCacheDir,
   redactProxyForLog,
   VIEWPORT
 } from '../src/browser.js';
@@ -87,4 +90,83 @@ test('proxy log formatting never exposes proxy credentials', () => {
   assert.equal(redactProxyForLog('socks5://proxy.example.test:1080'), 'socks5://proxy.example.test:1080');
   assert.equal(redactProxyForLog('not a url'), '[configured]');
   assert.equal(redactProxyForLog(''), 'none');
+});
+
+function fakeFs(files, dirs = {}, { links = {}, contents = {} } = {}) {
+  const existing = new Set(files);
+  return {
+    existsSync: (file) => existing.has(file),
+    realpathSync: (file) => links[file] || file,
+    statSync: (file) => ({ size: contents[file]?.length ?? 200_000_000 }),
+    readFileSync: (file) => contents[file] ?? '',
+    readdirSync: (dir) => (dirs[dir] || []).map((name) => ({ name, isDirectory: () => true }))
+  };
+}
+
+test('system browser discovery prefers Chrome, then Edge, on Linux', () => {
+  const env = { HOME: '/home/u' };
+  assert.equal(
+    findSystemBrowser({ platform: 'linux', env, fsImpl: fakeFs(['/usr/bin/microsoft-edge', '/usr/bin/google-chrome']) }),
+    '/usr/bin/google-chrome'
+  );
+  assert.equal(
+    findSystemBrowser({ platform: 'linux', env, fsImpl: fakeFs(['/usr/bin/microsoft-edge']) }),
+    '/usr/bin/microsoft-edge'
+  );
+  assert.equal(findSystemBrowser({ platform: 'linux', env, fsImpl: fakeFs([]) }), '');
+});
+
+test('system browser discovery keeps Windows install paths', () => {
+  const env = { PROGRAMFILES: 'C:\\Program Files' };
+  const chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  assert.equal(findSystemBrowser({ platform: 'win32', env, fsImpl: fakeFs([chrome]) }), chrome);
+});
+
+test('playwright cache dir follows platform conventions and overrides', () => {
+  assert.equal(playwrightCacheDir({ platform: 'linux', env: { HOME: '/home/u' } }), '/home/u/.cache/ms-playwright');
+  assert.equal(playwrightCacheDir({ platform: 'linux', env: { HOME: '/home/u', XDG_CACHE_HOME: '/xdg' } }), '/xdg/ms-playwright');
+  assert.equal(playwrightCacheDir({ platform: 'linux', env: { PLAYWRIGHT_BROWSERS_PATH: '/pw' } }), '/pw');
+  assert.equal(playwrightCacheDir({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\L' } }), 'C:\\L\\ms-playwright');
+});
+
+test('headless shell discovery picks the newest complete Linux install', () => {
+  const root = '/home/u/.cache/ms-playwright';
+  const fsImpl = fakeFs(
+    [
+      `${root}/chromium_headless_shell-1200/chrome-headless-shell-linux64/chrome-headless-shell`,
+      `${root}/chromium_headless_shell-1200/INSTALLATION_COMPLETE`,
+      `${root}/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell`,
+      `${root}/chromium_headless_shell-1234/INSTALLATION_COMPLETE`,
+      `${root}/chromium_headless_shell-1300/chrome-headless-shell-linux64/chrome-headless-shell`
+    ],
+    { [root]: ['chromium_headless_shell-1200', 'chromium_headless_shell-1234', 'chromium_headless_shell-1300', 'ffmpeg-1011'] }
+  );
+  assert.equal(
+    findPlaywrightHeadlessShell({ platform: 'linux', env: { HOME: '/home/u' }, fsImpl }),
+    `${root}/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell`
+  );
+});
+
+test('system browser discovery skips snap-confined Chromium on Linux', () => {
+  const env = { HOME: '/home/u' };
+  const snapOnly = fakeFs(['/usr/bin/chromium', '/usr/bin/chromium-browser'], {}, {
+    links: { '/usr/bin/chromium': '/snap/bin/chromium' },
+    contents: { '/usr/bin/chromium-browser': '#!/bin/sh\nexec /snap/bin/chromium "$@"\n' }
+  });
+  assert.equal(findSystemBrowser({ platform: 'linux', env, fsImpl: snapOnly }), '');
+
+  const native = fakeFs(['/usr/bin/chromium-browser'], {}, {
+    contents: { '/usr/bin/chromium-browser': '#!/bin/sh\nexec /usr/lib64/chromium-browser/chromium-browser "$@"\n' }
+  });
+  assert.equal(findSystemBrowser({ platform: 'linux', env, fsImpl: native }), '/usr/bin/chromium-browser');
+});
+
+test('headless shell discovery finds the Windows install', () => {
+  const root = 'C:\\L\\ms-playwright';
+  const exe = `${root}\\chromium_headless_shell-1234\\chrome-headless-shell-win64\\chrome-headless-shell.exe`;
+  const fsImpl = fakeFs(
+    [exe, `${root}\\chromium_headless_shell-1234\\INSTALLATION_COMPLETE`],
+    { [root]: ['chromium_headless_shell-1234'] }
+  );
+  assert.equal(findPlaywrightHeadlessShell({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\L' }, fsImpl }), exe);
 });
