@@ -88,8 +88,7 @@ const LINUX_BROWSER_PATHS = [
   '/usr/bin/microsoft-edge',
   '/opt/microsoft/msedge/msedge',
   '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-  '/snap/bin/chromium'
+  '/usr/bin/chromium-browser'
 ];
 
 // Relative paths (inside each chromium_headless_shell-<rev> folder) per platform.
@@ -160,8 +159,25 @@ export function findPlaywrightHeadlessShell({
   }
 }
 
+// Snap Chromium (and Ubuntu's /usr/bin/chromium-browser shim that execs it) is
+// confined and often cannot use a profile outside $HOME, so skip it and let
+// Playwright's bundled Chromium take over.
+const MAX_LAUNCHER_SCRIPT_BYTES = 64 * 1024;
+
+export function isSnapLauncher(candidate, fsImpl = fs) {
+  try {
+    if (fsImpl.realpathSync(candidate).startsWith('/snap/')) return true;
+    if (fsImpl.statSync(candidate).size > MAX_LAUNCHER_SCRIPT_BYTES) return false;
+    return fsImpl.readFileSync(candidate, 'utf8').includes('/snap/');
+  } catch {
+    return false;
+  }
+}
+
 export function findSystemBrowser({ platform = process.platform, env = process.env, fsImpl = fs } = {}) {
-  return systemBrowserCandidates({ platform, env }).find((candidate) => fsImpl.existsSync(candidate)) || '';
+  return systemBrowserCandidates({ platform, env }).find(
+    (candidate) => fsImpl.existsSync(candidate) && !(platform === 'linux' && isSnapLauncher(candidate, fsImpl))
+  ) || '';
 }
 
 export function redactProxyForLog(proxyServer) {

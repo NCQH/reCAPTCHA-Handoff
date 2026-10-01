@@ -86,7 +86,7 @@ When `CHROME_EXECUTABLE_PATH` is not set, the first existing path is used, in th
 |---|---|
 | 1 | `/usr/bin/google-chrome-stable`, `/usr/bin/google-chrome`, `/opt/google/chrome/chrome` |
 | 2 | `/usr/bin/microsoft-edge-stable`, `/usr/bin/microsoft-edge`, `/opt/microsoft/msedge/msedge` |
-| 3 | `/usr/bin/chromium`, `/usr/bin/chromium-browser`, `/snap/bin/chromium` |
+| 3 | `/usr/bin/chromium`, `/usr/bin/chromium-browser` (snap-packaged Chromium is skipped: its confinement usually blocks a profile outside `$HOME`) |
 | 4 | Newest complete Playwright headless shell in `$PLAYWRIGHT_BROWSERS_PATH`, `$XDG_CACHE_HOME/ms-playwright`, or `~/.cache/ms-playwright` (`app` mode only) |
 | 5 | Playwright's bundled Chromium |
 
@@ -94,7 +94,7 @@ When `CHROME_EXECUTABLE_PATH` is not set, the first existing path is used, in th
 
 - **Running as root** (common in Docker): Chrome refuses to start with its sandbox enabled. Run as a non-root user, or set `BROWSER_NO_SANDBOX=true` only inside an isolated container.
 - **`hidden` mode on Wayland**: Wayland does not let apps place their own windows, so `--window-position` is ignored and the window may appear on screen. Use the default `app` mode, or run under X11/Xvfb.
-- **Headless servers**: `app` mode is headless and needs no display. The `hidden` and `desktop` modes need an X server, for example `xvfb-run npm start`.
+- **Headless servers**: `app` mode is headless and needs no display. The `hidden` and `desktop` modes need a display (X11 or Wayland); on a server, use `xvfb-run npm start`.
 
 ## Run on Windows
 
@@ -103,7 +103,7 @@ npm install
 npm start
 ```
 
-When `CHROME_EXECUTABLE_PATH` is not set, the app looks for Chrome and then Edge under `%ProgramFiles%`, `%ProgramFiles(x86)%`, and `%LocalAppData%`. After that it looks for the Playwright headless shell in `%LocalAppData%\ms-playwright`.
+When `CHROME_EXECUTABLE_PATH` is not set, the app looks for Chrome and then Edge under `%ProgramFiles%`, `%ProgramFiles(x86)%`, and `%LocalAppData%`. In `app` mode it then looks for the Playwright headless shell in `%LocalAppData%\ms-playwright`.
 
 ```powershell
 $env:CHROME_EXECUTABLE_PATH="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"

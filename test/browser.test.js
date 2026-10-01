@@ -92,10 +92,13 @@ test('proxy log formatting never exposes proxy credentials', () => {
   assert.equal(redactProxyForLog(''), 'none');
 });
 
-function fakeFs(files, dirs = {}) {
+function fakeFs(files, dirs = {}, { links = {}, contents = {} } = {}) {
   const existing = new Set(files);
   return {
     existsSync: (file) => existing.has(file),
+    realpathSync: (file) => links[file] || file,
+    statSync: (file) => ({ size: contents[file]?.length ?? 200_000_000 }),
+    readFileSync: (file) => contents[file] ?? '',
     readdirSync: (dir) => (dirs[dir] || []).map((name) => ({ name, isDirectory: () => true }))
   };
 }
@@ -142,4 +145,28 @@ test('headless shell discovery picks the newest complete Linux install', () => {
     findPlaywrightHeadlessShell({ platform: 'linux', env: { HOME: '/home/u' }, fsImpl }),
     `${root}/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell`
   );
+});
+
+test('system browser discovery skips snap-confined Chromium on Linux', () => {
+  const env = { HOME: '/home/u' };
+  const snapOnly = fakeFs(['/usr/bin/chromium', '/usr/bin/chromium-browser'], {}, {
+    links: { '/usr/bin/chromium': '/snap/bin/chromium' },
+    contents: { '/usr/bin/chromium-browser': '#!/bin/sh\nexec /snap/bin/chromium "$@"\n' }
+  });
+  assert.equal(findSystemBrowser({ platform: 'linux', env, fsImpl: snapOnly }), '');
+
+  const native = fakeFs(['/usr/bin/chromium-browser'], {}, {
+    contents: { '/usr/bin/chromium-browser': '#!/bin/sh\nexec /usr/lib64/chromium-browser/chromium-browser "$@"\n' }
+  });
+  assert.equal(findSystemBrowser({ platform: 'linux', env, fsImpl: native }), '/usr/bin/chromium-browser');
+});
+
+test('headless shell discovery finds the Windows install', () => {
+  const root = 'C:\\L\\ms-playwright';
+  const exe = `${root}\\chromium_headless_shell-1234\\chrome-headless-shell-win64\\chrome-headless-shell.exe`;
+  const fsImpl = fakeFs(
+    [exe, `${root}\\chromium_headless_shell-1234\\INSTALLATION_COMPLETE`],
+    { [root]: ['chromium_headless_shell-1234'] }
+  );
+  assert.equal(findPlaywrightHeadlessShell({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\L' }, fsImpl }), exe);
 });
